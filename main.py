@@ -5,6 +5,7 @@ from datetime import datetime
 import math
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 app = FastAPI()
 
@@ -18,7 +19,8 @@ app.add_middleware(
 )
 
 # Create output directory for saved headers
-HEADERS_OUTPUT_DIR = r"C:\New folder\extracted_headers"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+HEADERS_OUTPUT_DIR = os.path.join(BASE_DIR, "extracted_headers")
 LABELS_OUTPUT_FILE = os.path.join(HEADERS_OUTPUT_DIR, "label_info.csv")
 os.makedirs(HEADERS_OUTPUT_DIR, exist_ok=True)
 
@@ -173,35 +175,44 @@ def persist_label_info(filename: str, headers: list[str]) -> dict:
             existing_df[col] = None
 
     existing_df = existing_df[columns]
-    existing_headers = {
-        str(value).strip()
-        for value in existing_df.loc[
-            existing_df["file name"].astype(str).str.strip() == str(filename).strip(),
-            "header text"
-        ].dropna().tolist()
-    }
+    existing_df["file name"] = existing_df["file name"].astype(str).fillna("").str.strip()
+    existing_df["header text"] = existing_df["header text"].astype(str).fillna("").str.strip()
+    existing_df["header index"] = pd.to_numeric(existing_df["header index"], errors="coerce")
 
+    rows_added = 0
+    rows_updated = 0
     new_rows = []
+    filename_str = str(filename).strip()
+
     for index, header in enumerate(headers):
         header_text = "" if pd.isna(header) else str(header)
         normalized_header = header_text.strip()
-        if normalized_header in existing_headers:
-            continue
-
         label_info = classify_age_header(header_text)
-        new_rows.append({
-            "Label": label_info["label"],
-            "header text": header_text,
-            "file name": filename,
-            "header index": index,
-        })
-        existing_headers.add(normalized_header)
 
-    if not new_rows:
+        matching_rows = (
+            (existing_df["file name"] == filename_str)
+            & (existing_df["header text"] == normalized_header)
+        )
+
+        if matching_rows.any():
+            existing_df.loc[matching_rows, "Label"] = label_info["label"]
+            existing_df.loc[matching_rows, "header index"] = index
+            rows_updated += int(matching_rows.sum())
+        else:
+            new_rows.append({
+                "Label": label_info["label"],
+                "header text": header_text,
+                "file name": filename,
+                "header index": index,
+            })
+            rows_added += 1
+
+    if rows_added == 0 and rows_updated == 0:
         return {
             "success": True,
             "message": "No new headers to record",
             "rows_added": 0,
+            "rows_updated": 0,
             "output_file": os.path.basename(LABELS_OUTPUT_FILE),
         }
 
@@ -212,8 +223,142 @@ def persist_label_info(filename: str, headers: list[str]) -> dict:
     return {
         "success": True,
         "message": "Label metadata recorded successfully",
-        "rows_added": len(new_rows),
+        "rows_added": rows_added,
+        "rows_updated": rows_updated,
         "output_file": os.path.basename(LABELS_OUTPUT_FILE),
+    }
+
+# Persist label metadata for manually entered text values.
+def persist_manual_label_text(text: str, filename: str | None = None) -> dict:
+    os.makedirs(HEADERS_OUTPUT_DIR, exist_ok=True)
+    columns = ["Label", "header text", "file name", "header index"]
+
+    existing_df = pd.DataFrame(columns=columns)
+    if os.path.exists(LABELS_OUTPUT_FILE) and os.path.getsize(LABELS_OUTPUT_FILE) > 0:
+        try:
+            existing_df = pd.read_csv(LABELS_OUTPUT_FILE)
+        except pd.errors.EmptyDataError:
+            existing_df = pd.DataFrame(columns=columns)
+
+    for col in columns:
+        if col not in existing_df.columns:
+            existing_df[col] = None
+
+    existing_df = existing_df[columns]
+    existing_df["file name"] = existing_df["file name"].astype(str).fillna("").str.strip()
+    existing_df["header text"] = existing_df["header text"].astype(str).fillna("").str.strip()
+    existing_df["header index"] = pd.to_numeric(existing_df["header index"], errors="coerce")
+
+    filename_str = str(filename).strip() if filename else "manual entry"
+    header_text = str(text).strip()
+    label_info = classify_age_header(header_text)
+    matching_rows = (
+        (existing_df["file name"] == filename_str)
+        & (existing_df["header text"] == header_text)
+    )
+
+    if matching_rows.any():
+        existing_df.loc[matching_rows, "Label"] = label_info["label"]
+        existing_df.loc[matching_rows, "header index"] = -1
+        rows_updated = int(matching_rows.sum())
+        rows_added = 0
+        combined_df = existing_df
+    else:
+        new_row = {
+            "Label": label_info["label"],
+            "header text": header_text,
+            "file name": filename_str,
+            "header index": -1,
+        }
+        combined_df = pd.concat([existing_df, pd.DataFrame([new_row])], ignore_index=True)
+        rows_added = 1
+        rows_updated = 0
+
+    combined_df = combined_df[columns]
+    combined_df.to_csv(LABELS_OUTPUT_FILE, index=False)
+
+    return {
+        "success": True,
+        "message": "Manual label text saved successfully",
+        "rows_added": rows_added,
+        "rows_updated": rows_updated,
+        "output_file": os.path.basename(LABELS_OUTPUT_FILE),
+        "label_info": {
+            "label": label_info["label"],
+            "reason": label_info["reason"],
+            "header_text": header_text,
+            "filename": filename_str,
+            "header_index": -1
+        }
+    }
+
+# Read label info CSV and return rows plus label options.
+def read_label_info(label: str | None = None) -> tuple[pd.DataFrame, list[str]]:
+    columns = ["Label", "header text", "file name", "header index"]
+    if not os.path.exists(LABELS_OUTPUT_FILE) or os.path.getsize(LABELS_OUTPUT_FILE) == 0:
+        return pd.DataFrame(columns=columns), []
+
+    try:
+        df = pd.read_csv(LABELS_OUTPUT_FILE)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame(columns=columns), []
+
+    for col in columns:
+        if col not in df.columns:
+            df[col] = None
+
+    df = df[columns]
+    df["Label"] = df["Label"].astype(str).fillna("").str.strip()
+    df["header text"] = df["header text"].astype(str).fillna("").str.strip()
+    df["file name"] = df["file name"].astype(str).fillna("").str.strip()
+    df["header index"] = pd.to_numeric(df["header index"], errors="coerce").fillna(-1).astype(int)
+
+    all_labels = sorted(df["Label"].dropna().unique().tolist())
+    if label:
+        df = df[df["Label"] == label]
+
+    return df, all_labels
+
+@app.get("/api/labels")
+def get_label_info(label: str | None = None):
+    df, all_labels = read_label_info(label)
+    rows = make_json_safe(df.to_dict(orient="records"))
+    return {
+        "rows": rows,
+        "label_options": all_labels,
+        "selected_label": label or ""
+    }
+
+@app.get("/api/labels/export")
+def export_label_info(label: str | None = None):
+    df, _ = read_label_info(label)
+    if df.empty:
+        raise HTTPException(status_code=400, detail="No label metadata available for export")
+
+    filename_safe = re.sub(r"[^a-zA-Z0-9_-]+", "_", (label or "all")).strip().lower() or "all"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_filename = f"label_info_{filename_safe}_{timestamp}.csv"
+    output_path = os.path.join(HEADERS_OUTPUT_DIR, output_filename)
+    df.to_csv(output_path, index=False)
+
+    return FileResponse(output_path, filename=output_filename, media_type="text/csv")
+
+@app.post("/api/classify-text")
+def classify_text(text: dict):
+    user_text = str(text.get("text", "")).strip()
+    if not user_text:
+        raise HTTPException(status_code=400, detail="Text is required")
+
+    filename = current_file["filename"] if current_file["filename"] else "manual entry"
+    result = persist_manual_label_text(user_text, filename)
+
+    return {
+        "success": True,
+        "message": "Text classified and saved",
+        "label_info": result["label_info"],
+        "rows_added": result["rows_added"],
+        "rows_updated": result["rows_updated"],
+        "output_file": result["output_file"]
     }
 
 @app.get("/api/headers")

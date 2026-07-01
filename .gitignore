@@ -1,0 +1,25 @@
+# Python environment
+myEnv/
+
+# VS Code
+.vscode/
+
+# Node modules and build outputs
+frontend/node_modules/
+frontend/dist/
+
+# Generated files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.env
+*.log
+extracted_headers/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temp files
+temp_*

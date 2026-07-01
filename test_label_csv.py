@@ -31,6 +31,30 @@ class LabelCsvLoggingTests(unittest.TestCase):
         self.assertEqual(list(df["file name"]), ["sample.csv", "sample.csv", "sample.csv"])
         self.assertEqual(list(df["header text"]), ["Age", "Name", "Email"])
 
+    def test_overwrites_existing_header_info_for_same_file(self):
+        main.persist_label_info("sample.csv", ["Name", "Age"])
+        main.persist_label_info("sample.csv", ["Age", "Name"])
+
+        df = pd.read_csv(main.LABELS_OUTPUT_FILE)
+        self.assertEqual(len(df), 2)
+
+        age_row = df[(df["file name"] == "sample.csv") & (df["header text"] == "Age")].iloc[0]
+        self.assertEqual(age_row["header index"], 0)
+
+    def test_persist_manual_label_text_stores_manual_entry(self):
+        result = main.persist_manual_label_text("Age of respondent", "manual.csv")
+
+        self.assertEqual(result["rows_added"], 1)
+        self.assertEqual(result["rows_updated"], 0)
+        self.assertEqual(result["label_info"]["label"], "Age")
+        self.assertEqual(result["label_info"]["header_text"], "Age of respondent")
+        self.assertEqual(result["label_info"]["filename"], "manual.csv")
+
+        df = pd.read_csv(main.LABELS_OUTPUT_FILE)
+        self.assertEqual(len(df), 1)
+        self.assertEqual(df.iloc[0]["file name"], "manual.csv")
+        self.assertEqual(df.iloc[0]["header text"], "Age of respondent")
+
 
 if __name__ == "__main__":
     unittest.main()
