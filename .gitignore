@@ -23,6 +23,3 @@ Thumbs.db
 
 # Temp files
 temp_*
-
-# Generated files from system
-extracted_headers/
