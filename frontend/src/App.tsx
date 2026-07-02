@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import './App.css'
+import { ToastContainer, toast } from 'react-toastify'
+import 'react-toastify/dist/ReactToastify.css'
 
 interface HeaderLabelInfo {
   label: string
@@ -31,11 +33,6 @@ interface LabelInfoRow {
   "header text": string
   "file name": string
   "header index": number
-}
-
-interface Notification {
-  type: 'success' | 'error' | 'info'
-  message: string
 }
 
 function App() {
@@ -70,7 +67,8 @@ function App() {
   const [selectedLabelFilter, setSelectedLabelFilter] = useState('')
   const [labelRows, setLabelRows] = useState<LabelInfoRow[]>([])
   const [labelLoading, setLabelLoading] = useState(false)
-  const [notification, setNotification] = useState<Notification | null>(null)
+  const [availableFiles, setAvailableFiles] = useState<string[]>([])
+  const [selectedFileFilter, setSelectedFileFilter] = useState('')
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -81,14 +79,13 @@ function App() {
       if (!validTypes.includes(file.type) && !['csv', 'xlsx', 'xls'].includes(fileExtension || '')) {
         const message = 'Please select a valid CSV or Excel file'
         setUploadError(message)
-        setNotification({ type: 'error', message })
+        toast.error(message)
         setUploadFile(null)
         return
       }
       
       setUploadFile(file)
       setUploadError(null)
-      setNotification(null)
     }
   }
 
@@ -96,7 +93,7 @@ function App() {
     if (!uploadFile) {
       const message = 'Please select a file first'
       setUploadError(message)
-      setNotification({ type: 'error', message })
+      toast.error(message)
       return
     }
 
@@ -143,10 +140,7 @@ function App() {
       if (messages.length === 0) {
         messages.push('No label metadata changes were needed')
       }
-      setNotification({
-        type: 'success',
-        message: `File uploaded successfully. ${messages.join('. ')}`
-      })
+      toast.success(`File uploaded successfully. ${messages.join('. ')}`)
       
       // Clear the file input
       const fileInput = document.getElementById('file-input') as HTMLInputElement
@@ -154,7 +148,7 @@ function App() {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'An error occurred during upload'
       setUploadError(message)
-      setNotification({ type: 'error', message })
+      toast.error(message)
     } finally {
       setUploading(false)
     }
@@ -201,7 +195,7 @@ function App() {
     if (!fileStatus.has_file) {
       const message = 'No file uploaded'
       setExportError(message)
-      setNotification({ type: 'error', message })
+      toast.error(message)
       return
     }
 
@@ -222,11 +216,11 @@ function App() {
       const result = await response.json()
       const successMessage = `Headers exported successfully to ${result.output_file}`
       setExportSuccess(successMessage)
-      setNotification({ type: 'success', message: successMessage })
+      toast.success(successMessage)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'An error occurred during export'
       setExportError(message)
-      setNotification({ type: 'error', message })
+      toast.error(message)
     } finally {
       setExporting(false)
     }
@@ -236,7 +230,7 @@ function App() {
     if (!manualText.trim()) {
       const message = 'Please enter text to classify'
       setManualError(message)
-      setNotification({ type: 'error', message })
+      toast.error(message)
       return
     }
 
@@ -260,33 +254,38 @@ function App() {
 
       const result = await response.json()
       setManualResult(result.label_info)
-      setNotification({ type: 'success', message: 'Text labeled and saved successfully' })
+      toast.success('Text labeled and saved successfully')
       setManualText('')
     } catch (err) {
       const message = err instanceof Error ? err.message : 'An error occurred while saving text'
       setManualError(message)
-      setNotification({ type: 'error', message })
+      toast.error(message)
     } finally {
       setManualSaving(false)
     }
   }
 
-  const fetchLabelInfo = async (label = '') => {
+  const fetchLabelInfo = async (label = selectedLabelFilter, file = selectedFileFilter) => {
     try {
       setLabelLoading(true)
-      const url = label ? `http://localhost:8000/api/labels?label=${encodeURIComponent(label)}` : 'http://localhost:8000/api/labels'
+      const params = new URLSearchParams()
+      if (label) params.append('label', label)
+      if (file) params.append('file', file)
+      const url = `http://localhost:8000/api/labels?${params.toString()}`
       const response = await fetch(url)
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.detail || 'Failed to load label info')
+        const errorData = await response.json().catch(() => null)
+        throw new Error(errorData?.detail || 'Failed to load label info')
       }
       const result = await response.json()
       setLabelRows(result.rows)
       setAvailableLabels(result.label_options)
+      setAvailableFiles(result.file_options || [])
       setSelectedLabelFilter(result.selected_label || '')
+      setSelectedFileFilter(result.selected_file || '')
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load label info'
-      setNotification({ type: 'error', message })
+      toast.error(message)
     } finally {
       setLabelLoading(false)
     }
@@ -294,31 +293,43 @@ function App() {
 
   const handleLabelFilterChange = async (selectedLabel: string) => {
     setSelectedLabelFilter(selectedLabel)
-    await fetchLabelInfo(selectedLabel)
+    await fetchLabelInfo(selectedLabel, selectedFileFilter)
   }
 
-  const handleExportLabelInfo = async () => {
+  const handleFileFilterChange = async (selectedFile: string) => {
+    setSelectedFileFilter(selectedFile)
+    await fetchLabelInfo(selectedLabelFilter, selectedFile)
+  }
+
+  const handleExportLabelInfo = async (format: 'csv' | 'excel' = 'csv') => {
     try {
-      const query = selectedLabelFilter ? `?label=${encodeURIComponent(selectedLabelFilter)}` : ''
-      const response = await fetch(`http://localhost:8000/api/labels/export${query}`)
+      setLabelLoading(true)
+      const params = new URLSearchParams()
+      if (selectedLabelFilter) params.append('label', selectedLabelFilter)
+      if (selectedFileFilter) params.append('file', selectedFileFilter)
+      params.append('format', format)
+
+      const response = await fetch(`http://localhost:8000/api/labels/export?${params.toString()}`)
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.detail || 'Failed to export label info')
+        const errorData = await response.json().catch(() => null)
+        throw new Error(errorData?.detail || 'Failed to export label info')
       }
       const blob = await response.blob()
       const downloadUrl = window.URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = downloadUrl
-      const filename = response.headers.get('content-disposition')?.split('filename=')[1] ?? 'label_info.csv'
+      const filename = response.headers.get('content-disposition')?.split('filename=')[1] ?? `label_info.${format === 'excel' ? 'xlsx' : 'csv'}`
       link.download = filename.replace(/"/g, '')
       document.body.appendChild(link)
       link.click()
       link.remove()
       window.URL.revokeObjectURL(downloadUrl)
-      setNotification({ type: 'success', message: 'Label info exported successfully' })
+      toast.success('Label info exported successfully')
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to export label info'
-      setNotification({ type: 'error', message })
+      toast.error(message)
+    } finally {
+      setLabelLoading(false)
     }
   }
 
@@ -326,18 +337,7 @@ function App() {
     <div style={{ maxWidth: 1000, margin: '2rem auto', fontFamily: 'Arial, sans-serif', padding: '1rem' }}>
       <h1>CSV/Excel Data Manager</h1>
 
-      {notification && (
-        <div style={{
-          margin: '1rem 0',
-          padding: '1rem',
-          borderRadius: '8px',
-          border: '1px solid',
-          backgroundColor: notification.type === 'success' ? '#E8F5E9' : notification.type === 'error' ? '#FFEBEE' : '#E3F2FD',
-          color: notification.type === 'success' ? '#2E7D32' : notification.type === 'error' ? '#C62828' : '#1565C0'
-        }}>
-          <strong>{notification.type === 'error' ? 'Error:' : notification.type === 'success' ? 'Success:' : 'Info:'}</strong> {notification.message}
-        </div>
-      )}
+      <ToastContainer position="top-right" autoClose={4000} hideProgressBar={false} newestOnTop closeOnClick pauseOnHover />
 
       <div style={{ marginBottom: '1rem' }}>
         <button
@@ -559,9 +559,23 @@ function App() {
                 <option key={option} value={option}>{option}</option>
               ))}
             </select>
+
+            <label style={{ fontWeight: 'bold' }} htmlFor="file-filter">Filter by file:</label>
+            <select
+              id="file-filter"
+              value={selectedFileFilter}
+              onChange={(e) => handleFileFilterChange(e.target.value)}
+              style={{ padding: '0.75rem', border: '1px solid #ccc', borderRadius: '4px', minWidth: '180px' }}
+            >
+              <option value="">All files</option>
+              {availableFiles.map((f) => (
+                <option key={f} value={f}>{f}</option>
+              ))}
+            </select>
+
             <button
               type="button"
-              onClick={handleExportLabelInfo}
+              onClick={() => handleExportLabelInfo('csv')}
               disabled={labelLoading}
               style={{
                 padding: '0.75rem 1.25rem',
@@ -573,6 +587,22 @@ function App() {
               }}
             >
               Export CSV
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleExportLabelInfo('excel')}
+              disabled={labelLoading}
+              style={{
+                padding: '0.75rem 1.25rem',
+                backgroundColor: '#1976D2',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+            >
+              Export Excel
             </button>
           </div>
 

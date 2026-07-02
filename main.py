@@ -293,15 +293,15 @@ def persist_manual_label_text(text: str, filename: str | None = None) -> dict:
     }
 
 # Read label info CSV and return rows plus label options.
-def read_label_info(label: str | None = None) -> tuple[pd.DataFrame, list[str]]:
+def read_label_info(label: str | None = None, filename: str | None = None) -> tuple[pd.DataFrame, list[str], list[str]]:
     columns = ["Label", "header text", "file name", "header index"]
     if not os.path.exists(LABELS_OUTPUT_FILE) or os.path.getsize(LABELS_OUTPUT_FILE) == 0:
-        return pd.DataFrame(columns=columns), []
+        return pd.DataFrame(columns=columns), [], []
 
     try:
         df = pd.read_csv(LABELS_OUTPUT_FILE)
     except pd.errors.EmptyDataError:
-        return pd.DataFrame(columns=columns), []
+        return pd.DataFrame(columns=columns), [], []
 
     for col in columns:
         if col not in df.columns:
@@ -314,34 +314,48 @@ def read_label_info(label: str | None = None) -> tuple[pd.DataFrame, list[str]]:
     df["header index"] = pd.to_numeric(df["header index"], errors="coerce").fillna(-1).astype(int)
 
     all_labels = sorted(df["Label"].dropna().unique().tolist())
+    all_files = sorted(df["file name"].dropna().unique().tolist())
+
     if label:
         df = df[df["Label"] == label]
+    if filename:
+        df = df[df["file name"] == filename]
 
-    return df, all_labels
+    return df, all_labels, all_files
 
 @app.get("/api/labels")
-def get_label_info(label: str | None = None):
-    df, all_labels = read_label_info(label)
+def get_label_info(label: str | None = None, file: str | None = None):
+    df, all_labels, all_files = read_label_info(label, file)
     rows = make_json_safe(df.to_dict(orient="records"))
     return {
         "rows": rows,
         "label_options": all_labels,
-        "selected_label": label or ""
+        "file_options": all_files,
+        "selected_label": label or "",
+        "selected_file": file or ""
     }
 
 @app.get("/api/labels/export")
-def export_label_info(label: str | None = None):
-    df, _ = read_label_info(label)
+def export_label_info(label: str | None = None, file: str | None = None, format: str = "csv"):
+    df, _, _ = read_label_info(label, file)
     if df.empty:
         raise HTTPException(status_code=400, detail="No label metadata available for export")
 
-    filename_safe = re.sub(r"[^a-zA-Z0-9_-]+", "_", (label or "all")).strip().lower() or "all"
+    filename_safe = re.sub(r"[^a-zA-Z0-9_-]+", "_", (label or file or "all")).strip().lower() or "all"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_filename = f"label_info_{filename_safe}_{timestamp}.csv"
-    output_path = os.path.join(HEADERS_OUTPUT_DIR, output_filename)
-    df.to_csv(output_path, index=False)
+    if format.lower() in ("excel", "xlsx"):
+        output_filename = f"label_info_{filename_safe}_{timestamp}.xlsx"
+        output_path = os.path.join(HEADERS_OUTPUT_DIR, output_filename)
+        # write Excel using openpyxl engine (ensure openpyxl is installed)
+        df.to_excel(output_path, index=False, engine="openpyxl")
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        output_filename = f"label_info_{filename_safe}_{timestamp}.csv"
+        output_path = os.path.join(HEADERS_OUTPUT_DIR, output_filename)
+        df.to_csv(output_path, index=False)
+        media_type = "text/csv"
 
-    return FileResponse(output_path, filename=output_filename, media_type="text/csv")
+    return FileResponse(output_path, filename=output_filename, media_type=media_type)
 
 @app.post("/api/classify-text")
 def classify_text(text: dict):
