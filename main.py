@@ -32,43 +32,6 @@ current_file = {
     "row_count": 0
 }
 
-
-# def normalize_header_text(text: str) -> str:
-#     return re.sub(r"[^a-z0-9\s]", " ", text.lower()).strip()
-
-
-# def classify_age_header(header: str) -> dict[str, str | bool]:
-#     text = normalize_header_text(header)
-
-#     # Exclude headers that describe a different group's age or an entity's age.
-#     negative_pattern = re.compile(
-#         r"\b(age(?:\s*group)?)(?:\s*of|\s+for|\s+from)?\s+(patients?|children|child|customers?|clients?|employees?|staff|students?|members?|family|household|parents?|spouses?|partners?|patients?)\b"
-#         r"|\b(patients?|children|child|customers?|clients?|employees?|staff|students?|members?|family|household|parents?|spouses?|partners?)\b.*\b(age(?:\s*group)?|years old|how old|current age|age range)\b"
-#     )
-#     if negative_pattern.search(text):
-#         return {
-#             "label": "Not Age",
-#             "reason": "References another group or entity rather than the data owner/respondent"
-#         }
-
-#     # Positive signals for age labels.
-#     age_positive = re.compile(
-#         r"\b(current age|your age|my age|respondent(?:'s)? age|participant(?:'s)? age|subject(?:'s)? age|owner(?:'s)? age|age range|age(?: \(years\)| in years)?|years old|how old|age)\b"
-#     )
-#     if not age_positive.search(text):
-#         return {"label": "Not Age", "reason": "No direct age-related wording found"}
-
-#     # If the header explicitly refers to self/respondent/or owner, accept as Age.
-#     self_signal = re.compile(r"\b(your|you|current|my|respondent|participant|subject|owner|self)\b")
-#     if self_signal.search(text):
-#         return {"label": "Age", "reason": "Direct self/owner age reference found"}
-
-#     # If it contains an age group or age range with no clear unrelated entity, accept as Age.
-#     if re.search(r"\b(age group|age range|years old|how old|current age|age \(years\)|age in years)\b", text):
-#         return {"label": "Age", "reason": "Age-related field without unrelated entity context"}
-
-#     return {"label": "Not Age", "reason": "Age wording appears ambiguous or not directly about the owner/respondent"}
-
 # ---------- Precompiled patterns (compiled once) ----------
 
 # Any age‑related wording
