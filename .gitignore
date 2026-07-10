@@ -10,6 +10,7 @@ frontend/dist/
 
 # Generated files
 __pycache__/
+*.pyc
 *.py[cod]
 *.pyo
 *.pyd

@@ -1,8 +1,5 @@
 from __future__ import annotations
-
 from typing import Iterable
-
-AGE_SCORE = 0
 
 AGE_HINTS = {
     "age",
@@ -92,7 +89,14 @@ AGE_MODIFIERS = {
     "birthdays",
     "duration",
     "born",
+}
 
+DIFFERENT_TIME_REFERENCES = {
+    "recent",
+    "when",
+    "at",
+    "by",
+    "from"
 }
 
 AGE_BIGRAMS = { 
@@ -102,7 +106,20 @@ AGE_BIGRAMS = {
 
     ("age", "group"),
     ("age", "range"),
-    ("your", "age")
+    ("your", "age"),
+    ("current", "age")
+}
+
+EXTERNAL_BIGRAMS = {
+    ("age", "of"),
+    ("age", "in"),
+    ("age", "at"),
+    ("age", "for"),
+    ("age", "by"),
+    ("age", "from"),
+    ("age", "to"),
+    ("age", "and"),
+    ("age", "or")
 }
 
 
@@ -127,50 +144,78 @@ def normalize_header_text(text: str) -> str:
     return " ".join(tokenize_text(text))
 
 
-def _has_age_context(tokens: Iterable[str]) -> bool:
-    global AGE_SCORE
+def _score_age_context(tokens: Iterable[str]) -> tuple[int, list[str]]:
     token_list = list(tokens)
     if not token_list:
-        return False
+        return 0, []
+
+    token_set = set(token_list)
+    score = 0
+    reasons: list[str] = []
+
+    if token_set.intersection(DIFFERENT_TIME_REFERENCES):
+        score -= 8
+        reasons.append("time reference")
+
+    if token_set.intersection(EXTERNAL_ENTITIES):
+        score -= 8
+        reasons.append("external entity")
+
+    if token_set.intersection(SELF_TERMS):
+        score += 3
+        reasons.append("self reference")
+
     if any(token in AGE_HINTS for token in token_list):
-        AGE_SCORE += 5
-        return True
+        score += 4
+        reasons.append("age-related wording")
+
     bigrams = {
         (token_list[i], token_list[i + 1])
         for i in range(len(token_list) - 1)
     }
     if any(bigram in AGE_BIGRAMS for bigram in bigrams):
-        AGE_SCORE += 5
-        return True
-    return False
+        score += 8
+        reasons.append("age phrase")
+    
+    if any(bigram in EXTERNAL_BIGRAMS for bigram in bigrams):
+        score -= 8
+        reasons.append("external age reference")
+
+    return score, reasons
 
 
 def classify_age_header(header: str) -> dict[str, str | bool]:
-    global AGE_SCORE
     normalized = normalize_header_text(header)
     tokens = tokenize_text(normalized)
     if not tokens:
-        AGE_SCORE = 0
         return {"label": "Not Age", "reason": "No meaningful tokens found"}
 
-    token_set = set(tokens)
+    score, reasons = _score_age_context(tokens)
 
-    if token_set.intersection(EXTERNAL_ENTITIES):
-        AGE_SCORE -= 5
-        # return {
-        #     "label": "Not Age",
-        #     "reason": "Refers to an external entity such as a patient, pet, customer, or product",
-        # }
+    if score <= 0:
+        if "external entity" in reasons:
+            return {
+                "label": "Not Age",
+                "reason": "Contains an external entity reference rather than age information",
+            }
+        if "external age reference" in reasons:
+            return {
+                "label": "Not Age",
+                "reason": "Contains an external age reference rather than age information",
+            }
+ 
+    if score < 8:
+        return {
+            "label": "Not Age",
+            "reason": "Contains some age-related wording but not enough to classify as age",
+        }
 
-    if token_set.intersection(SELF_TERMS):
-        AGE_SCORE += 5
-        # return {"label": "Age", "reason": "Contains a self/owner reference"}
-
-    if _has_age_context(tokens):
-        # if token_set.intersection(AGE_MODIFIERS):
-        #     AGE_SCORE += 5
-            # return {"label": "Age", "reason": "Contains age-related wording with a common field modifier"}
-        if AGE_SCORE >= 5:
-            return {"label": "Age", "reason": "Contains enough age-related wording"}
+    if score >= 8:
+        if "self reference" in reasons:
+            return {
+                "label": "Age",
+                "reason": "Contains self/owner reference and age-related wording",
+            }
+        return {"label": "Age", "reason": "Contains enough age-related wording"}
 
     return {"label": "Not Age", "reason": "No enough age-related evidence found"}
