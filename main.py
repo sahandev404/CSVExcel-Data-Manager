@@ -6,6 +6,9 @@ import math
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from file_service import persist_label_info, build_label_info, read_label_info, make_json_safe, persist_manual_label_text
+from file_service import HEADERS_OUTPUT_DIR
+from file_service import current_file
 
 app = FastAPI()
 
@@ -17,274 +20,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Create output directory for saved headers
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-HEADERS_OUTPUT_DIR = os.path.join(BASE_DIR, "extracted_headers")
-LABELS_OUTPUT_FILE = os.path.join(HEADERS_OUTPUT_DIR, "label_info.csv")
-os.makedirs(HEADERS_OUTPUT_DIR, exist_ok=True)
-
-# Global variable to store current uploaded file data
-current_file = {
-    "df": None,
-    "filename": None,
-    "headers": [],
-    "row_count": 0
-}
-
-# ---------- Precompiled patterns (compiled once) ----------
-
-# Any age‑related wording
-_AGE_PATTERN = re.compile(
-    r"\b(age|years old|how old|current age|age range|age group|age in years)\b"
-)
-
-# Self / respondent / owner references
-_SELF_PATTERN = re.compile(
-    r"\b(your|you|current|my|respondent|participant|subject|owner|self)\b"
-)
-
-# ---------- Keyword sets for fast lookup ----------
-
-# Words that clearly refer to a *different* entity (not the respondent/owner)
-_EXTERNAL_ENTITIES = {
-    "patient", "patients", "child", "children",
-    "customer", "customers", "client", "clients",
-    "employee", "employees", "staff",
-    "student", "students", "member", "members",
-    "family", "household",
-    "parent", "parents", "spouse", "spouses", "partner", "partners",
-    "dog", "dogs", "cat", "cats", "pet", "pets",
-    "product", "products", "item", "items",
-    "vehicle", "vehicles", "car", "cars",
-    "house", "houses", "property", "properties"
-}
-
-# Words that just describe the age field itself (modifiers / connectors)
-_AGE_MODIFIERS = {
-    "group", "range", "years", "old", "limit", "bracket",
-    "year", "distribution", "category",
-    "and", "or", "by", "to", "from", "in"
-}
-
-
-def normalize_header_text(text: str) -> str:
-    return re.sub(r"[^a-z0-9\s]", " ", text.lower()).strip()
-
-
-def classify_age_header(header: str) -> dict[str, str | bool]:
-    """
-    Classify a column header as 'Age' (of the respondent/owner) or 'Not Age'.
-
-    The logic is:
-      1. Must contain age‑related wording.
-      2. If any external entity (patient, dog, product, etc.) appears → Not Age.
-      3. If a self‑reference (my, respondent, etc.) appears → Age.
-      4. If an age modifier (group, range, and, by, etc.) appears → Age.
-      5. Otherwise → default to Age (e.g. plain "Age").
-    """
-    text = normalize_header_text(header)
-
-    # 1. Must contain age‑related wording
-    if not _AGE_PATTERN.search(text):
-        return {"label": "Not Age", "reason": "No age‑related wording found"}
-
-    words = set(text.split())
-
-    # 2. External entity takes priority over everything else
-    #    (e.g., "age of my dog" → "dog" triggers Not Age)
-    if words.intersection(_EXTERNAL_ENTITIES):
-        return {
-            "label": "Not Age",
-            "reason": "Refers to an external entity (e.g., patient, customer, pet, product)"
-        }
-
-    # 3. Self / respondent reference → Age
-    if _SELF_PATTERN.search(text):
-        return {"label": "Age", "reason": "Direct self/owner reference"}
-
-    # 4. Common age‑field modifier → Age
-    if words.intersection(_AGE_MODIFIERS):
-        return {"label": "Age", "reason": "Age field with common modifier"}
-
-    # 5. Default to Age (covers plain "age", "age (years)", etc.)
-    return {"label": "Age", "reason": "General age field"}
-
-def make_json_safe(records):
-    def safe_value(value):
-        if pd.isna(value):
-            return None
-        return value
-
-    return [
-        {key: safe_value(value) for key, value in record.items()}
-        for record in records
-    ]
-
-# Persist label metadata for uploaded headers into a CSV file.
-def persist_label_info(filename: str, headers: list[str]) -> dict:
-    os.makedirs(HEADERS_OUTPUT_DIR, exist_ok=True)
-    columns = ["Label", "header text", "file name", "header index"]
-
-    existing_df = pd.DataFrame(columns=columns)
-    if os.path.exists(LABELS_OUTPUT_FILE) and os.path.getsize(LABELS_OUTPUT_FILE) > 0:
-        try:
-            existing_df = pd.read_csv(LABELS_OUTPUT_FILE)
-        except pd.errors.EmptyDataError:
-            existing_df = pd.DataFrame(columns=columns)
-
-    for col in columns:
-        if col not in existing_df.columns:
-            existing_df[col] = None
-
-    existing_df = existing_df[columns]
-    existing_df["file name"] = existing_df["file name"].astype(str).fillna("").str.strip()
-    existing_df["header text"] = existing_df["header text"].astype(str).fillna("").str.strip()
-    existing_df["header index"] = pd.to_numeric(existing_df["header index"], errors="coerce")
-
-    rows_added = 0
-    rows_updated = 0
-    new_rows = []
-    filename_str = str(filename).strip()
-
-    for index, header in enumerate(headers):
-        header_text = "" if pd.isna(header) else str(header)
-        normalized_header = header_text.strip()
-        label_info = classify_age_header(header_text)
-
-        matching_rows = (
-            (existing_df["file name"] == filename_str)
-            & (existing_df["header text"] == normalized_header)
-        )
-
-        if matching_rows.any():
-            existing_df.loc[matching_rows, "Label"] = label_info["label"]
-            existing_df.loc[matching_rows, "header index"] = index
-            rows_updated += int(matching_rows.sum())
-        else:
-            new_rows.append({
-                "Label": label_info["label"],
-                "header text": header_text,
-                "file name": filename,
-                "header index": index,
-            })
-            rows_added += 1
-
-    if rows_added == 0 and rows_updated == 0:
-        return {
-            "success": True,
-            "message": "No new headers to record",
-            "rows_added": 0,
-            "rows_updated": 0,
-            "output_file": os.path.basename(LABELS_OUTPUT_FILE),
-        }
-
-    combined_df = pd.concat([existing_df, pd.DataFrame(new_rows)], ignore_index=True)
-    combined_df = combined_df[columns]
-    combined_df.to_csv(LABELS_OUTPUT_FILE, index=False)
-
-    return {
-        "success": True,
-        "message": "Label metadata recorded successfully",
-        "rows_added": rows_added,
-        "rows_updated": rows_updated,
-        "output_file": os.path.basename(LABELS_OUTPUT_FILE),
-    }
-
-# Persist label metadata for manually entered text values.
-def persist_manual_label_text(text: str, filename: str | None = None) -> dict:
-    os.makedirs(HEADERS_OUTPUT_DIR, exist_ok=True)
-    columns = ["Label", "header text", "file name", "header index"]
-
-    existing_df = pd.DataFrame(columns=columns)
-    if os.path.exists(LABELS_OUTPUT_FILE) and os.path.getsize(LABELS_OUTPUT_FILE) > 0:
-        try:
-            existing_df = pd.read_csv(LABELS_OUTPUT_FILE)
-        except pd.errors.EmptyDataError:
-            existing_df = pd.DataFrame(columns=columns)
-
-    for col in columns:
-        if col not in existing_df.columns:
-            existing_df[col] = None
-
-    existing_df = existing_df[columns]
-    existing_df["file name"] = existing_df["file name"].astype(str).fillna("").str.strip()
-    existing_df["header text"] = existing_df["header text"].astype(str).fillna("").str.strip()
-    existing_df["header index"] = pd.to_numeric(existing_df["header index"], errors="coerce")
-
-    filename_str = str(filename).strip() if filename else "manual entry"
-    header_text = str(text).strip()
-    label_info = classify_age_header(header_text)
-    matching_rows = (
-        (existing_df["file name"] == filename_str)
-        & (existing_df["header text"] == header_text)
-    )
-
-    if matching_rows.any():
-        existing_df.loc[matching_rows, "Label"] = label_info["label"]
-        existing_df.loc[matching_rows, "header index"] = -1
-        rows_updated = int(matching_rows.sum())
-        rows_added = 0
-        combined_df = existing_df
-    else:
-        new_row = {
-            "Label": label_info["label"],
-            "header text": header_text,
-            "file name": filename_str,
-            "header index": -1,
-        }
-        combined_df = pd.concat([existing_df, pd.DataFrame([new_row])], ignore_index=True)
-        rows_added = 1
-        rows_updated = 0
-
-    combined_df = combined_df[columns]
-    combined_df.to_csv(LABELS_OUTPUT_FILE, index=False)
-
-    return {
-        "success": True,
-        "message": "Manual label text saved successfully",
-        "rows_added": rows_added,
-        "rows_updated": rows_updated,
-        "output_file": os.path.basename(LABELS_OUTPUT_FILE),
-        "label_info": {
-            "label": label_info["label"],
-            "reason": label_info["reason"],
-            "header_text": header_text,
-            "filename": filename_str,
-            "header_index": -1
-        }
-    }
-
-# Read label info CSV and return rows plus label options.
-def read_label_info(label: str | None = None, filename: str | None = None) -> tuple[pd.DataFrame, list[str], list[str]]:
-    columns = ["Label", "header text", "file name", "header index"]
-    if not os.path.exists(LABELS_OUTPUT_FILE) or os.path.getsize(LABELS_OUTPUT_FILE) == 0:
-        return pd.DataFrame(columns=columns), [], []
-
-    try:
-        df = pd.read_csv(LABELS_OUTPUT_FILE)
-    except pd.errors.EmptyDataError:
-        return pd.DataFrame(columns=columns), [], []
-
-    for col in columns:
-        if col not in df.columns:
-            df[col] = None
-
-    df = df[columns]
-    df["Label"] = df["Label"].astype(str).fillna("").str.strip()
-    df["header text"] = df["header text"].astype(str).fillna("").str.strip()
-    df["file name"] = df["file name"].astype(str).fillna("").str.strip()
-    df["header index"] = pd.to_numeric(df["header index"], errors="coerce").fillna(-1).astype(int)
-
-    all_labels = sorted(df["Label"].dropna().unique().tolist())
-    all_files = sorted(df["file name"].dropna().unique().tolist())
-
-    if label:
-        df = df[df["Label"] == label]
-    if filename:
-        df = df[df["file name"] == filename]
-
-    return df, all_labels, all_files
 
 @app.get("/api/labels")
 def get_label_info(label: str | None = None, file: str | None = None):
@@ -372,7 +107,7 @@ def get_data(header: str | None = None, page: int = 1, page_size: int = 10):
     records = current_file["df"][[header]].iloc[start:end].to_dict(orient="records")
     safe_records = make_json_safe(records)
 
-    label_info = classify_age_header(header)
+    label_info = build_label_info(header, filename=current_file["filename"], header_index=current_file["headers"].index(header))
     return {
         "header": header,
         "page": page,
@@ -380,13 +115,7 @@ def get_data(header: str | None = None, page: int = 1, page_size: int = 10):
         "total_records": total_records,
         "total_pages": total_pages,
         "rows": safe_records,
-        "label_info": {
-            "label": label_info["label"],
-            "reason": label_info["reason"],
-            "header_text": header,
-            "filename": current_file["filename"],
-            "header_index": current_file["headers"].index(header)
-        }
+        "label_info": label_info
     }
 
 @app.post("/api/export-headers")
@@ -425,10 +154,8 @@ def export_headers(output_format: str = "csv"):
 async def upload_file(file: UploadFile = File(...)):
     """
     Upload CSV or Excel file and store it for processing.
-    
     Args:
         file: CSV or Excel file to upload (.csv, .xlsx, .xls)
-    
     Returns:
         JSON with headers and file metadata
     """
