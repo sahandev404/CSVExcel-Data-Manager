@@ -131,7 +131,7 @@ def persist_manual_label_text(text: str, filename: str | None = None) -> dict:
     existing_df["header text"] = existing_df["header text"].astype(str).fillna("").str.strip()
     existing_df["header index"] = pd.to_numeric(existing_df["header index"], errors="coerce")
 
-    # filename_str = str(filename).strip() if filename else "manual entry"
+    # keeping filename as "manual entry" for manual label text entries even if a filename is provided, to distinguish them from uploaded files.
     filename_str = "manual entry"
     header_text = str(text).strip()
     label_info = build_label_info(header_text, filename=filename_str, header_index=-1)
