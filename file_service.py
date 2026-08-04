@@ -34,7 +34,6 @@ def build_label_info(header: str, filename: str | None = None, header_index: int
     label_info = classify_age_header(header)
     return {
         "label": label_info["label"],
-        "reason": label_info["reason"],
         "header_text": str(header).strip(),
         "filename": filename,
         "header_index": header_index,
@@ -168,7 +167,6 @@ def persist_manual_label_text(text: str, filename: str | None = None) -> dict:
         "output_file": os.path.basename(LABELS_OUTPUT_FILE),
         "label_info": {
             "label": label_info["label"],
-            "reason": label_info["reason"],
             "header_text": header_text,
             "filename": filename_str,
             "header_index": -1
