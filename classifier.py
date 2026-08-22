@@ -9,10 +9,14 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 class AgeClassificationResult(TypedDict):
     label: str
+    age_score: float
+    not_age_score: float
+    confidence: float  # New field for overall confidence
 
 
 class AgeClassifier:
     MIN_AGE_SCORE = 0.25
+    CONFIDENCE_THRESHOLD = 0.3  # Minimum difference between scores to be confident
 
     TRAINING_EXAMPLES: list[tuple[str, str]] = [
         ("age of respondent", "Age"),
@@ -59,7 +63,7 @@ class AgeClassifier:
 
         self.vectorizer = TfidfVectorizer(
             lowercase=True,
-            ngram_range=(1, 2),
+            ngram_range=(1, 3),
             stop_words="english",
         )
 
@@ -109,9 +113,17 @@ class AgeClassifier:
             )[0][0]
         )
 
+        # Use scores for better decision making
+        score_diff = age_score - not_age_score
+        
+        # If both scores are low, default to "Not Age" (conservative approach)
+        if max(age_score, not_age_score) < 0.15:
+            return "Not Age", age_score, not_age_score
+        
+        # If age_score is significantly higher and above threshold
         if (
             age_score >= self.MIN_AGE_SCORE
-            and age_score > not_age_score
+            and score_diff > self.CONFIDENCE_THRESHOLD
         ):
             return "Age", age_score, not_age_score
 
@@ -147,8 +159,44 @@ def classify_age_header(header: str) -> AgeClassificationResult:
     normalized = normalize_header_text(header)
 
     if not normalized:
-        return {"label": "Not Age"}
+        return {
+            "label": "Not Age",
+            "age_score": 0.0,
+            "not_age_score": 0.0,
+            "confidence": 0.0
+        }
 
-    prediction, _, _ = _predict_with_tfidf(normalized)
+    prediction, age_score, not_age_score = _predict_with_tfidf(normalized)
+    
+    # Calculate confidence based on score difference
+    confidence = abs(age_score - not_age_score)
+    
+    # Optional: Add a confidence-based label override
+    if confidence < 0.1:  # Very low confidence
+        prediction = "Not Age"  # Conservative fallback
 
-    return {"label": prediction}
+    return {
+        "label": prediction,
+        "age_score": age_score,
+        "not_age_score": not_age_score,
+        "confidence": confidence
+    }
+
+
+# Optional: Helper function to get classification with confidence level
+def classify_age_header_with_confidence(header: str) -> dict:
+    """Returns classification with confidence level for better decision making."""
+    result = classify_age_header(header)
+    
+    # Determine confidence level
+    if result["confidence"] > 0.4:
+        confidence_level = "high"
+    elif result["confidence"] > 0.2:
+        confidence_level = "medium"
+    else:
+        confidence_level = "low"
+    
+    return {
+        **result,
+        "confidence_level": confidence_level
+    }
