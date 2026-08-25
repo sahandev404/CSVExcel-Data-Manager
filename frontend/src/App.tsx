@@ -5,7 +5,6 @@ import 'react-toastify/dist/ReactToastify.css'
 
 interface HeaderLabelInfo {
   label: string
-  reason: string
   header_text: string
   filename: string | null
   header_index: number
@@ -513,7 +512,6 @@ function App() {
           {manualResult && (
             <div style={{ marginTop: '1rem', padding: '1rem', backgroundColor: '#e8f5e9', color: '#2e7d32', borderRadius: '4px', border: '1px solid #4caf50' }}>
               <p style={{ margin: '0.25rem 0' }}><strong>Label:</strong> {manualResult.label}</p>
-              <p style={{ margin: '0.25rem 0' }}><strong>Reason:</strong> {manualResult.reason}</p>
               <p style={{ margin: '0.25rem 0' }}><strong>Saved Text:</strong> {manualResult.header_text}</p>
               <p style={{ margin: '0.25rem 0' }}><strong>File Name:</strong> {manualResult.filename}</p>
             </div>
@@ -799,7 +797,6 @@ function App() {
                 <div>
                   <div style={{ marginBottom: '1rem', padding: '1rem', backgroundColor: '#ffffff', borderRadius: '8px', border: '1px solid #dcdcdc' }}>
                     <p style={{ margin: '0.25rem 0', fontSize: '0.95rem' }}><strong>Label:</strong> {data.label_info.label}</p>
-                    <p style={{ margin: '0.25rem 0', fontSize: '0.95rem' }}><strong>Reason:</strong> {data.label_info.reason}</p>
                     <p style={{ margin: '0.25rem 0', fontSize: '0.95rem' }}><strong>Header Text:</strong> {data.label_info.header_text}</p>
                     <p style={{ margin: '0.25rem 0', fontSize: '0.95rem' }}><strong>File Name:</strong> {data.label_info.filename || 'Unknown'}</p>
                     <p style={{ margin: '0.25rem 0', fontSize: '0.95rem' }}><strong>Header Index:</strong> {data.label_info.header_index}</p>
