@@ -25,6 +25,14 @@ class LabelCsvLoggingTests(unittest.TestCase):
         self.assertEqual(result["label"], "Age")
         # self.assertIn("tf-idf", str(result["reason"]).lower())
 
+    def test_classifier_uses_logistic_regression_with_holdout_validation(self):
+        age_classifier = classifier.AgeClassifier.get_instance()
+        model = age_classifier.model.named_steps["classifier"]
+
+        self.assertIsInstance(model, classifier.LogisticRegression)
+        self.assertGreaterEqual(age_classifier.validation_accuracy, 0.0)
+        self.assertLessEqual(age_classifier.validation_accuracy, 1.0)
+
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_output_dir = file_service.HEADERS_OUTPUT_DIR
