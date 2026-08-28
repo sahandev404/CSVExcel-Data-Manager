@@ -16,7 +16,6 @@ current_file = {
     "row_count": 0
 }
 
-# Tokenizer-based age classification is provided by my_classifire.py.
 def make_json_safe(records):
     def safe_value(value):
         if pd.isna(value):
@@ -30,7 +29,7 @@ def make_json_safe(records):
 
 
 def build_label_info(header: str, filename: str | None = None, header_index: int | None = None) -> dict[str, object]:
-    """Run the tokenizer-based classifier and return the label payload used by the API."""
+    """Run the age classifier and return the label payload used by the API."""
     label_info = classify_age_header(header)
     return {
         "label": label_info["label"],
@@ -130,7 +129,6 @@ def persist_manual_label_text(text: str, filename: str | None = None) -> dict:
     existing_df["header text"] = existing_df["header text"].astype(str).fillna("").str.strip()
     existing_df["header index"] = pd.to_numeric(existing_df["header index"], errors="coerce")
 
-    # keeping filename as "manual entry" for manual label text entries even if a filename is provided, to distinguish them from uploaded files.
     filename_str = "manual entry"
     header_text = str(text).strip()
     label_info = build_label_info(header_text, filename=filename_str, header_index=-1)
